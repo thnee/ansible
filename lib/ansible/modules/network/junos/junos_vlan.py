@@ -50,7 +50,7 @@ options:
       - List of interfaces to check the VLAN has been
         configured correctly.
   collection:
-    description: List of VLANs definitions
+    description: List of VLANs definitions.
   purge:
     description:
       - Purge VLANs not defined in the collections parameter.
@@ -63,6 +63,26 @@ options:
 """
 
 EXAMPLES = """
+- name: configure VLAN ID and name
+  junos_vlan:
+    vlan_name: test
+    vlan_id: 20
+    name: test-vlan
+
+- name: remove VLAN configuration
+  junos_vlan:
+    vlan_name: test
+    state: absent
+
+- name: deactive VLAN configuration
+  junos_vlan:
+    vlan_name: test
+    state: suspend
+
+- name: activate VLAN configuration
+  junos_vlan:
+    vlan_name: test
+    state: active
 """
 
 RETURN = """
@@ -125,16 +145,17 @@ def main():
 
     top = 'vlans/vlan'
 
-    param_xpath_map = collections.OrderedDict()
-    param_xpath_map.update({
+    param_to_xpath_map = collections.OrderedDict()
+    param_to_xpath_map.update({
         'name': 'name',
         'vlan_id': 'vlan-id',
         'description': 'description'
     })
 
-    validate_param_values(module, param_xpath_map)
+    validate_param_values(module, param_to_xpath_map)
 
-    want = map_params_to_obj(module, param_xpath_map)
+    want = list()
+    want.append(map_params_to_obj(module, param_to_xpath_map))
     ele = map_obj_to_ele(module, want, top)
 
     kwargs = {'commit': not module.check_mode}

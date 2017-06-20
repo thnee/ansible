@@ -48,6 +48,12 @@ ARGS_DEFAULT_VALUE = {
     'timeout': 10
 }
 
+OPERATION_LOOK_UP = {
+    'absent': 'delete',
+    'active': 'active',
+    'suspend': 'inactive'
+}
+
 
 def get_argspec():
     return junos_argument_spec
@@ -216,42 +222,88 @@ def get_param(module, key):
     return module.params[key] or module.params['provider'].get(key)
 
 
-def map_params_to_obj(module, param_xpath_map):
+def map_params_to_obj(module, param_to_xpath_map):
+    """
+    Creates a new dictionary with key as xpath corresponding
+    to param and value is a dict with metadata and value for
+    the xpath.
+    Acceptable metadata keys:
+        'xpath': Relative xpath corresponding to module param.
+        'value': Value of param.
+        'tag_only': Value is indicated by tag only in xml hierarchy.
+        'leaf_only': If operation is to be added at leaf node only.
+    eg: Output
+    {
+        'name': {'xpath': 'name', 'value': 'ge-0/0/1'}
+        'disable': {'xpath': 'disable', 'tag_only': True}
+    }
+
+    :param module:
+    :param param_to_xpath_map: Modules params to xpath map
+    :return: obj
+    """
     obj = collections.OrderedDict()
-    for key, value in param_xpath_map.items():
+    for key, attrib in param_to_xpath_map.items():
         if key in module.params:
-            obj.update({value: module.params[key]})
-    return [obj]
+            if isinstance(attrib, dict):
+                xpath = attrib.get('xpath')
+                del attrib['xpath']
+
+                attrib.update({'value': module.params[key]})
+                obj.update({xpath: attrib})
+            else:
+                xpath = attrib
+                obj.update({xpath: {'value': module.params[key]}})
+    return obj
 
 
-def map_obj_to_ele(module, want, top):
+def map_obj_to_ele(module, want, top, value_map=None):
     top_ele = top.split('/')
     root = Element(top_ele[0])
     ele = root
+    oper = None
     if len(top_ele) > 1:
         for item in top_ele[1:-1]:
             ele = SubElement(ele, item)
     container = ele
     state = module.params.get('state')
 
+    # build xml subtree
     for obj in want:
         node = SubElement(container, top_ele[-1])
         if state and state != 'present':
-            if state == 'absent':
-                node.set('operation', 'delete')
-            elif state == 'active':
-                node.set('active', 'active')
-            elif state == 'suspend':
-                node.set('inactive', 'inactive')
+            oper = OPERATION_LOOK_UP.get(state)
+            node.set(oper, oper)
 
-        for key, value in obj.items():
-            if value:
+        for xpath, attrib in obj.items():
+            tag_only = attrib.get('tag_only', False)
+            leaf_only = attrib.get('leaf_only', False)
+            value = attrib.get('value')
+
+            # convert param value to device specific value
+            if value_map and xpath in value_map:
+                value = value_map[xpath].get(value)
+
+            # for leaf only fields operation attributes should be at leaf level
+            # and not at node level.
+            if leaf_only and node.attrib.get(oper):
+                node.attrib.pop(oper)
+
+            if value or tag_only or leaf_only:
                 ele = node
-                tags = key.split('/')
+                tags = xpath.split('/')
+
                 for item in tags:
                     ele = SubElement(ele, item)
 
-                ele.text = to_text(value, errors='surrogate_then_replace')
+                if tag_only:
+                    if not value:
+                        ele.set('delete', 'delete')
+                elif leaf_only and oper:
+                    ele.set(oper, oper)
+                else:
+                    ele.text = to_text(value, errors='surrogate_then_replace')
+
                 if state != 'present':
                     break
 
